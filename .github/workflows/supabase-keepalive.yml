@@ -2,19 +2,61 @@ name: Supabase Keep Alive
 
 on:
   schedule:
-    - cron: "0 3 */2 * *"  # 每两天 UTC 03:00
+    # 每周至少一次：这里示例每周一 UTC 03:00
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 jobs:
   keepalive:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Call Supabase API
-        run: |
-          curl -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/health_check" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d '{}'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: go-project
+            supabase_url: SUPABASE_URL_GO
+            supabase_key: SUPABASE_SERVICE_ROLE_KEY_GO
+            expected_ref: ""   # 可选：填入该项目 URL 里的 ref（https://<ref>.supabase.co）
+          - name: test-project
+            supabase_url: SUPABASE_URL_TEST
+            supabase_key: SUPABASE_SERVICE_ROLE_KEY_TEST
+            expected_ref: ""   # 可选：同上
 
+    steps:
+      - name: Ping Supabase (${{ matrix.name }})
+        env:
+          SUPABASE_URL: ${{ secrets[matrix.supabase_url] }}
+          SUPABASE_KEY: ${{ secrets[matrix.supabase_key] }}
+          EXPECTED_REF: ${{ matrix.expected_ref }}
+          PROJECT_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+
+          echo "Project: $PROJECT_NAME"
+          echo "URL: ${SUPABASE_URL}/rest/v1/health_check"
+
+          # 可选：防误配校验（强烈建议你填 expected_ref 后启用）
+          if [ -n "${EXPECTED_REF}" ]; then
+            ref=$(echo "$SUPABASE_URL" | sed -E 's#https://([^.]+)\..*#\1#')
+            echo "Project ref: $ref (expected: $EXPECTED_REF)"
+            test "$ref" = "$EXPECTED_REF"
+          fi
+
+          payload=$(printf '{"source":"github-actions","run_id":"%s"}' "${GITHUB_RUN_ID}")
+
+          status=$(curl -sS -o resp.txt -w "%{http_code}" \
+            -X POST "${SUPABASE_URL}/rest/v1/health_check" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d "$payload"
+          )
+
+          echo "HTTP Status: $status"
+          echo "Response:"
+          cat resp.txt
+
+          # 非2xx直接失败
+          test "$status" -ge 200 -a "$status" -lt 300
