@@ -2,7 +2,7 @@ name: Supabase Keep Alive
 
 on:
   schedule:
-    # 每周至少一次：这里示例每周一 UTC 03:00
+    # 每天一次：这里示例 UTC 03:17
     - cron: "17 3 * * *"
   workflow_dispatch:
 
